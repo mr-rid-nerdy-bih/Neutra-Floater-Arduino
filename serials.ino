@@ -1,6 +1,5 @@
 void btSerial() {
   if (bt.available()) {
-    // Read the whole message until the newline
     String input = bt.readStringUntil('\n');
     input.trim(); // Remove spaces and \n
 
