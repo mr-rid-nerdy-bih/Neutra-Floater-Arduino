@@ -1,60 +1,77 @@
+/**
+ * RADAR & SERVO CONTROL MODULE
+ * Handles the sweeping motion and distance sensing via HC-SR04.
+ */
+
 // --- Radar Configuration ---
-int rDir = 60;
-int rInc = 10;
+int rDir = 90;               // Current angle (start at center)
+int rInc = 5;                // Increment size (Smaller = smoother sweep)
 unsigned long lastRadarMove = 0;
+const int radarInterval = 50; // Delay between steps (ms)
 
-// HC-SR04 Pins (Ensure these are defined in your main .ino)
-// const int trigPin = 9;
-// const int echoPin = 10;
-
+/**
+ * Sweeps the servo back and forth when in "Radar" mode.
+ * Automatically sends "Angle,Distance" data over Bluetooth.
+ */
 void servoMode() {
   if (sv_mode == "Radar") {
-    if (millis() - lastRadarMove >= 50) { 
+    if (millis() - lastRadarMove >= radarInterval) { 
       
-      // 1. Boundary Check
+      // 1. DIRECTION LOGIC: Reverse direction at boundaries
       if (rDir >= 180 || rDir <= 0) {
         rInc *= -1;
       }
       
-      // 2. Move Servo
+      // 2. MOVEMENT: Increment position
       rDir += rInc;
       sv.write(rDir);
       
-      // 3. Distance Sensing
+      // 3. SENSING: Get distance from ultrasonic sensor
       long distance = readUltra();
       
-      // 4. Output to Serial/Bluetooth
-      // Format: "Angle,Distance" makes it easy to map in a Processing or p5.js app
+      // 4. DATA STREAM: Format for p5.js / Processing apps
+      // Output example: "45,120"
       bt.print(rDir);
       bt.print(",");
       bt.println(distance);
       
       lastRadarMove = millis();
     }
-  } else {
-    sv.write(90); // Home position
+  } 
+  else {
+    // IDLE MODE: Return to center to save power/avoid obstruction
+    if (rDir != 90) {
+      rDir = 90;
+      sv.write(rDir);
+    }
   }
 }
 
-// Function to handle the HC-SR04 Trigger/Echo
+/**
+ * Triggers the Ultrasonic sensor and calculates distance in cm.
+ * Uses a non-blocking timeout to prevent system lag.
+ */
 long readUltra() {
+  // Ensure pins are clean before triggering
   digitalWrite(trigPin, LOW);
   delayMicroseconds(2);
   
-  // Trigger the sensor with a 10 microsecond HIGH pulse
+  // Send 10us pulse to trigger pin
   digitalWrite(trigPin, HIGH);
   delayMicroseconds(10);
   digitalWrite(trigPin, LOW);
   
-  // Read the echoPin (returns the sound wave travel time in microseconds)
-  // We use a timeout of 30000ms so the code doesn't hang if no object is found
+  // pulseIn waits for the ECHO pin to go HIGH and returns travel time in us
+  // Timeout set to 30ms (approx 5 meters max range)
   long duration = pulseIn(echoPin, HIGH, 30000);
   
-  // Calculate distance: (time * speed of sound) / 2 (there and back)
-  // 0.034 cm/us is the speed of sound
+  // Distance math: (Time [us] * Speed of Sound [0.034 cm/us]) / 2
   long distance = duration * 0.034 / 2;
   
-  // Return 0 or a high number if out of range to prevent logic errors
-  if (distance > 400 || distance <= 0) return 400; 
+  // Sanity check: If result is out of physical sensor bounds (2cm - 400cm)
+  if (distance > 400 || distance <= 0) {
+    return 400; // Return max range if no clear echo
+  }
+  
   return distance;
 }
