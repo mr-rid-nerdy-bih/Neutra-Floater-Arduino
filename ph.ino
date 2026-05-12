@@ -43,29 +43,40 @@ float offset = 7.00;                // Voltage-to-pH conversion offset
  */
 void phLoop() {
   // --- 1. HARDWARE SIMULATION ---
-  // Create a raw signal with +/- 0.02 random noise to test filter performance
   float noise = (random(-20, 20) / 1000.0);
   int simulatedADC = getSimulatedADC(envPH + noise);
 
   // --- 2. SIGNAL PROCESSING ---
-  // Convert "raw" ADC to pH and apply Exponential Moving Average (EMA)
   float currentPH = getPH(simulatedADC);
   filteredPH = emaFilter(filteredPH, currentPH);
+  
+  // UPDATE TELEMETRY: Always keep the live pH in the dictionary
+  liveData.ph = filteredPH;
 
   // --- 3. ENVIRONMENTAL MODELING ---
-  // pH naturally drops over time when pump is inactive and water is settled
   if (!isDosing && millis() > doseLockoutTime) {
     if (millis() - lastUpdate >= vHour) {
       envPH -= decayRate;
-      
-      // Feedback to Serial/Bluetooth
-      bt.print("DEBUG | True: "); bt.print(envPH, 2);
-      bt.print(" | Filtered: "); bt.println(filteredPH, 2);
       lastUpdate = millis();
     }
-  } else {
+    // Logic for counting down to next possible dose if needed
+    liveData.ds.due = 0; 
+  } else if (millis() < doseLockoutTime) {
+    // Show remaining settling time in seconds
+    liveData.ds.due = (doseLockoutTime - millis()) / 1000;
     lastUpdate = millis(); 
   }
+
+  // --- 4. AUTOMATED DOSING DECISION ---
+  float phGap = targetPH - filteredPH;
+  
+  if (phGap > doseThHold && !isDosing && millis() > doseLockoutTime) { 
+    float doseVol = (phGap / 0.1) * mlPer01PH;
+    startDose(constrain(doseVol, 0, 1000)); 
+  }
+  
+  updatePumpStatus(filteredPH); 
+}
 
   // --- 4. AUTOMATED DOSING DECISION ---
   float phGap = targetPH - filteredPH;
@@ -94,18 +105,20 @@ int getSimulatedADC(float phValue) {
  * Activates the peristaltic pump and calculates timing.
  */
 void startDose(float ml) {
-  // Safety check from eeprom_safety.ino
+  // ERROR CHECK: Update telemetry error field
   if (myData.dailyLimitCounter >= 500.0) {
-    bt.println(">>> ERROR: DAILY DOSE LIMIT EXCEEDED (500ml)");
+    liveData.err = "MAX_LIMIT";
     return; 
   }
 
   pendingPhLift = (ml / mlPer01PH) * 0.1;
   pumpDuration = (ml / pumpFlowRate) * 60 * 1000;
 
-  bt.print(">>> PUMPING: "); bt.print(ml); bt.println("mL");
+  // UPDATE TELEMETRY: Status and Current Amount
+  liveData.ds.stat = "PUMPING";
+  liveData.ds.msg = "DOSING_PH";
+  liveData.ds.amt = ml;
   
-  // Hardware pins (Defined in Neutra_Floater.ino)
   digitalWrite(p_pump_in3, HIGH);
   digitalWrite(p_pump_in4, LOW);
   analogWrite(p_pump, 140); 
@@ -115,38 +128,41 @@ void startDose(float ml) {
   currentPendingMl = ml; 
 }
 
-/**
- * Monitors pump progress and handles emergency shutoffs.
- */
 void updatePumpStatus(float pH) {
-  // SENSOR SANITY CHECK: Shutdown if reading is unrealistic
+  // SENSOR SANITY CHECK
   if (pH < 5.0 || pH > 9.0) {
     if (isDosing) {
       analogWrite(p_pump, 0); 
       isDosing = false;
-      bt.println(">>> EMERGENCY STOP: PROBE OUT OF RANGE");
+      liveData.err = "PROBE_RANGE";
+      liveData.ds.stat = "ERROR";
     }
     return;
   }
 
-  // CHECK COMPLETION
-  if (isDosing && (millis() - pumpStartTime >= pumpDuration)) {
-    analogWrite(p_pump, 0); 
-    isDosing = false;
-    
-    // Update the simulation "water" state
-    envPH += pendingPhLift; 
-    
-    // Record to EEPROM
-    myData.dailyLimitCounter += currentPendingMl;
-    saveSettings(); 
+  // MONITOR PROGRESS
+  if (isDosing) {
+    // Send remaining pump time to Web App
+    unsigned long elapsed = millis() - pumpStartTime;
+    if (elapsed < pumpDuration) {
+      liveData.ds.due = (pumpDuration - elapsed) / 1000;
+    }
 
-    // Start mixing period
-    doseLockoutTime = millis() + SETTLING_DELAY;
+    if (millis() - pumpStartTime >= pumpDuration) {
+      analogWrite(p_pump, 0); 
+      isDosing = false;
+      
+      envPH += pendingPhLift; 
+      myData.dailyLimitCounter += currentPendingMl;
+      saveSettings(); 
 
-    bt.println(">>> DOSE COMPLETE. SETTLING PERIOD ACTIVE.");
-    bt.print(">>> TOTAL DOSE TODAY: ");
-    bt.print(myData.dailyLimitCounter); bt.println("mL");
+      doseLockoutTime = millis() + SETTLING_DELAY;
+
+      // UPDATE TELEMETRY: Settling state
+      liveData.ds.stat = "SETTLING";
+      liveData.ds.msg = "DOSE_DONE";
+      liveData.err = "NONE";
+    }
   }
 }
 

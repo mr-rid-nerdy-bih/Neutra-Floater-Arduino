@@ -32,27 +32,25 @@ String sv_mode = "None";   // Modes: "None", "Radar"
 extern float envPH;        
 
 void setup() {
-  // Communication
   Serial.begin(115200);
   bt.begin(9600);
   
-  // Pin Modes
   pinMode(p_pump, OUTPUT);
   pinMode(p_pump_in3, OUTPUT);
   pinMode(p_pump_in4, OUTPUT);
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
   
-  // Initial Hardware State
-  digitalWrite(p_pump, LOW); // Ensure pump is OFF at boot
-  sv.write(90);              // Move servo to center before attaching
+  digitalWrite(p_pump, LOW);
+  sv.write(90);
   sv.attach(p_sv);
   
-  // EEPROM Initial Load (Defined in eeprom_safety.ino)
   loadSettings(); 
 
-  Serial.println(">>> NEUTRA-FLOATER ONLINE");
-  bt.println("SYSTEM: Connection Established.");
+  liveData.ds.msg = "BOOT_OK";
+  liveData.ds.stat = "READY";
+  
+  Serial.println(F(">>> NEUTRA-FLOATER ONLINE"));
 }
 
 void loop() {
@@ -61,4 +59,10 @@ void loop() {
   btSerial();     // Command parsing
   phLoop();       // Simulation, filtering, and dosing
   servoMode();    // Radar sweeping and distance sensing
+
+  // Automatic Telemetry Broadcast
+  if (millis() - lastBTUpdate >= BT_INTERVAL) {
+    sendTelemetry();
+    lastBTUpdate = millis();
+  }
 }

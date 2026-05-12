@@ -2,17 +2,54 @@
 struct BluetoothData {
   float dist;
   float ph;
-  String err = "NONE";      // Standardized to All-Caps
+  int ang;          // Added for Radar angle
+  String err = "NONE";
   
   struct DosingData {
-    String msg = "IDLE";    // Standardized to All-Caps
-    long due = 0;           // Numbers only as requested
+    String msg = "IDLE";
+    long due = 0;
     float amt = 0.0;
-    String stat = "READY";  // Standardized to All-Caps
+    String stat = "READY";
   } ds;
 };
 
 BluetoothData liveData; 
+
+void btSerial() {
+  if (bt.available()) {
+    String input = bt.readStringUntil('\n');
+    input.trim();
+
+    if (input.length() > 0) {
+      // 1. MODES
+      if (input == "1") {
+        sv_mode = "None";
+        liveData.ds.stat = "MANUAL";
+        liveData.ds.msg = "IDLE";
+      } 
+      else if (input == "3") {
+        sv_mode = "Radar";
+        liveData.ds.stat = "AUTO";
+        liveData.ds.msg = "SCANNING";
+      }
+      // 2. CALIBRATION
+      else if (input == "CAL") {
+        int currentRaw = analogRead(A0);
+        calibrateSeven(currentRaw); 
+        
+        liveData.err = "NONE";
+        liveData.ds.msg = "CAL_DONE";
+      }
+      // 3. TELEMETRY TRIGGER (Manual override)
+      else if (input == "GET") {
+        sendTelemetry();
+      }
+      else {
+        liveData.err = "UNKNOWN_CMD";
+      }
+    }
+  }
+}
 
 void sendTelemetry() {
   String json = "{";
@@ -26,37 +63,5 @@ void sendTelemetry() {
   json += F(",\"st\":\""); json += liveData.ds.stat;
   json += F("\"}}");
 
-  bt.println(json);
-}
-
-void btSerial() {
-  if (bt.available()) {
-    String input = bt.readStringUntil('\n');
-    input.trim();
-
-    if (input.length() > 0) {
-      Serial.print("DEBUG: Received -> ");
-      Serial.println(input);
-
-      // Handle Numeric Modes (1=None, 3=Radar)
-      if (input == "1") {
-        sv_mode = "None";
-        Serial.println("SYSTEM: Mode set to NONE");
-      } 
-      else if (input == "3") {
-        sv_mode = "Radar";
-        Serial.println("SYSTEM: Mode set to RADAR");
-      }
-      // Handle Calibration Command (e.g., "CAL")
-      else if (input == "CAL") {
-        int currentRaw = analogRead(A0);
-        calibrateSeven(currentRaw);
-        bt.print("SUCCESS: Calibrated at Offset ");
-        bt.println(offset);
-      }
-      else {
-        Serial.println("DEBUG: Unknown Command.");
-      }
-    }
-  }
+  bt.println(json); // This is now the ONLY place bt.println is used
 }
