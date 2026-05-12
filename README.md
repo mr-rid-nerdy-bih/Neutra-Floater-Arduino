@@ -78,7 +78,7 @@ Contributions are welcome! Whether you have suggestions for improvements, bug re
 
 ## License
 
-[Add your license information here]
+The project is made available under the MIT license. See the `LICENSE` file for more information.
 
 ## Support
 
